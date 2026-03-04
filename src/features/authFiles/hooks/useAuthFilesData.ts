@@ -1,17 +1,49 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { authFilesApi } from '@/services/api';
+import { apiCallApi, authFilesApi, getApiCallErrorMessage } from '@/services/api';
 import { apiClient } from '@/services/api/client';
 import { useNotificationStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { formatFileSize } from '@/utils/format';
 import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';
 import { downloadBlob } from '@/utils/download';
+import {
+  CODEX_REQUEST_HEADERS,
+  CODEX_USAGE_URL,
+  resolveCodexChatgptAccountId
+} from '@/utils/quota';
+import { normalizeAuthIndex } from '@/utils/usage';
 import { getTypeLabel, isRuntimeOnlyAuthFile } from '@/features/authFiles/constants';
 
 type DeleteAllOptions = {
   filter: string;
   onResetFilterToAll: () => void;
+};
+
+type ScanDelete401Options = {
+  filter: string;
+};
+
+type ScanDelete401Phase = 'idle' | 'scanning' | 'scan_done' | 'deleting' | 'done';
+
+type ScanDelete401ErrorItem = {
+  message: string;
+  count: number;
+};
+
+export type ScanDelete401Status = {
+  running: boolean;
+  phase: ScanDelete401Phase;
+  filter: string;
+  total: number;
+  scanned: number;
+  unauthorized: number;
+  errors: number;
+  skipped: number;
+  deletingTotal: number;
+  deleted: number;
+  deleteFailed: number;
+  topErrors: ScanDelete401ErrorItem[];
 };
 
 export type UseAuthFilesDataResult = {
@@ -37,11 +69,65 @@ export type UseAuthFilesDataResult = {
   deselectAll: () => void;
   batchSetStatus: (names: string[], enabled: boolean) => Promise<void>;
   batchDelete: (names: string[]) => void;
+  scanDelete401Status: ScanDelete401Status;
+  handleScanDelete401: (options: ScanDelete401Options) => void;
 };
 
 export type UseAuthFilesDataOptions = {
   refreshKeyStats: () => Promise<void>;
 };
+
+const SCAN_401_CONCURRENCY = 8;
+const DELETE_401_CONCURRENCY = 8;
+const MAX_SCAN_401_ERROR_ITEMS = 3;
+
+const EMPTY_SCAN_DELETE_401_STATUS: ScanDelete401Status = {
+  running: false,
+  phase: 'idle',
+  filter: 'all',
+  total: 0,
+  scanned: 0,
+  unauthorized: 0,
+  errors: 0,
+  skipped: 0,
+  deletingTotal: 0,
+  deleted: 0,
+  deleteFailed: 0,
+  topErrors: []
+};
+
+const normalizeFileType = (file: AuthFileItem): string =>
+  String(file.type ?? file.provider ?? '').trim().toLowerCase();
+
+const trimErrorMessage = (message: string): string => {
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+};
+
+const summarizeErrorMap = (errorMap: Map<string, number>): ScanDelete401ErrorItem[] =>
+  Array.from(errorMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, MAX_SCAN_401_ERROR_ITEMS)
+    .map(([message, count]) => ({ message, count }));
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+  const workerCount = Math.max(1, Math.min(items.length, concurrency));
+  let index = 0;
+  const threads = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const current = index;
+      index += 1;
+      if (current >= items.length) return;
+      await worker(items[current], current);
+    }
+  });
+  await Promise.all(threads);
+}
 
 export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFilesDataResult {
   const { refreshKeyStats } = options;
@@ -56,6 +142,9 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
   const [deletingAll, setDeletingAll] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [scanDelete401Status, setScanDelete401Status] = useState<ScanDelete401Status>(
+    EMPTY_SCAN_DELETE_401_STATUS
+  );
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selectionCount = selectedFiles.size;
@@ -488,6 +577,222 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     [showConfirmation, showNotification, t]
   );
 
+  const handleScanDelete401 = useCallback(
+    (optionsForScan: ScanDelete401Options) => {
+      if (scanDelete401Status.running) {
+        showNotification(t('auth_files.scan_401_running'), 'info');
+        return;
+      }
+
+      const filter = String(optionsForScan.filter || 'all').trim().toLowerCase();
+      const scopeTypeLabel = filter === 'all' ? t('auth_files.filter_all') : getTypeLabel(t, filter);
+      const scopedFiles = files.filter((file) => {
+        if (isRuntimeOnlyAuthFile(file)) return false;
+        if (filter === 'all') return true;
+        return normalizeFileType(file) === filter;
+      });
+      const codexFiles = scopedFiles.filter((file) => normalizeFileType(file) === 'codex');
+      const skipped = Math.max(0, scopedFiles.length - codexFiles.length);
+
+      if (codexFiles.length === 0) {
+        setScanDelete401Status({
+          ...EMPTY_SCAN_DELETE_401_STATUS,
+          phase: 'done',
+          filter,
+          skipped
+        });
+        showNotification(
+          t('auth_files.scan_401_no_target', {
+            scope: scopeTypeLabel
+          }),
+          'info'
+        );
+        return;
+      }
+
+      setScanDelete401Status({
+        ...EMPTY_SCAN_DELETE_401_STATUS,
+        running: true,
+        phase: 'scanning',
+        filter,
+        total: codexFiles.length,
+        skipped
+      });
+
+      void (async () => {
+        const unauthorizedNames: string[] = [];
+        const errorMap = new Map<string, number>();
+        let scanned = 0;
+        let errorCount = 0;
+
+        await runWithConcurrency(codexFiles, SCAN_401_CONCURRENCY, async (file) => {
+          try {
+            const rawAuthIndex = file['auth_index'] ?? file.authIndex;
+            const authIndex = normalizeAuthIndex(rawAuthIndex);
+            if (!authIndex) {
+              throw new Error(t('codex_quota.missing_auth_index'));
+            }
+
+            const chatgptAccountId = resolveCodexChatgptAccountId(file);
+            if (!chatgptAccountId) {
+              throw new Error(t('codex_quota.missing_account_id'));
+            }
+
+            const result = await apiCallApi.request({
+              authIndex,
+              method: 'GET',
+              url: CODEX_USAGE_URL,
+              header: {
+                ...CODEX_REQUEST_HEADERS,
+                'Chatgpt-Account-Id': chatgptAccountId
+              }
+            });
+
+            if (result.statusCode === 401) {
+              unauthorizedNames.push(file.name);
+              return;
+            }
+
+            if (result.statusCode < 200 || result.statusCode >= 300) {
+              throw new Error(getApiCallErrorMessage(result));
+            }
+          } catch (err: unknown) {
+            errorCount += 1;
+            const message = trimErrorMessage(
+              err instanceof Error ? err.message : t('common.unknown_error')
+            );
+            errorMap.set(message, (errorMap.get(message) || 0) + 1);
+          } finally {
+            scanned += 1;
+            setScanDelete401Status((prev) => ({
+              ...prev,
+              scanned,
+              unauthorized: unauthorizedNames.length,
+              errors: errorCount,
+              topErrors: summarizeErrorMap(errorMap)
+            }));
+          }
+        });
+
+        const topErrors = summarizeErrorMap(errorMap);
+        setScanDelete401Status((prev) => ({
+          ...prev,
+          running: false,
+          phase: 'scan_done',
+          scanned: codexFiles.length,
+          unauthorized: unauthorizedNames.length,
+          errors: errorCount,
+          topErrors
+        }));
+
+        if (unauthorizedNames.length === 0) {
+          showNotification(
+            t('auth_files.scan_401_scan_done', {
+              total: codexFiles.length,
+              unauthorized: 0,
+              errors: errorCount
+            }),
+            errorCount > 0 ? 'warning' : 'success'
+          );
+          setScanDelete401Status((prev) => ({ ...prev, phase: 'done' }));
+          return;
+        }
+
+        showConfirmation({
+          title: t('auth_files.scan_401_delete_title'),
+          message: t('auth_files.scan_401_delete_confirm', {
+            count: unauthorizedNames.length,
+            total: codexFiles.length
+          }),
+          variant: 'danger',
+          confirmText: t('common.confirm'),
+          onCancel: () => {
+            setScanDelete401Status((prev) => ({
+              ...prev,
+              running: false,
+              phase: 'done'
+            }));
+          },
+          onConfirm: async () => {
+            let deletedCount = 0;
+            let deleteFailedCount = 0;
+            const deletedNames: string[] = [];
+
+            setScanDelete401Status((prev) => ({
+              ...prev,
+              running: true,
+              phase: 'deleting',
+              deletingTotal: unauthorizedNames.length,
+              deleted: 0,
+              deleteFailed: 0
+            }));
+
+            await runWithConcurrency(unauthorizedNames, DELETE_401_CONCURRENCY, async (name) => {
+              try {
+                await authFilesApi.deleteFile(name);
+                deletedCount += 1;
+                deletedNames.push(name);
+              } catch {
+                deleteFailedCount += 1;
+              } finally {
+                setScanDelete401Status((prev) => ({
+                  ...prev,
+                  deleted: deletedCount,
+                  deleteFailed: deleteFailedCount
+                }));
+              }
+            });
+
+            if (deletedNames.length > 0) {
+              const deletedSet = new Set(deletedNames);
+              setFiles((prev) => prev.filter((file) => !deletedSet.has(file.name)));
+              setSelectedFiles((prev) => {
+                if (prev.size === 0) return prev;
+                let changed = false;
+                const next = new Set<string>();
+                prev.forEach((name) => {
+                  if (deletedSet.has(name)) {
+                    changed = true;
+                  } else {
+                    next.add(name);
+                  }
+                });
+                return changed ? next : prev;
+              });
+            }
+
+            await refreshKeyStats().catch(() => {});
+
+            setScanDelete401Status((prev) => ({
+              ...prev,
+              running: false,
+              phase: 'done',
+              deleted: deletedCount,
+              deleteFailed: deleteFailedCount
+            }));
+
+            showNotification(
+              t('auth_files.scan_401_delete_result', {
+                success: deletedCount,
+                failed: deleteFailedCount
+              }),
+              deleteFailedCount > 0 ? 'warning' : 'success'
+            );
+          }
+        });
+      })().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : t('common.unknown_error');
+        setScanDelete401Status((prev) => ({
+          ...prev,
+          running: false,
+          phase: 'done'
+        }));
+        showNotification(`${t('notification.operation_failed')}: ${message}`, 'error');
+      });
+    },
+    [files, refreshKeyStats, scanDelete401Status.running, showConfirmation, showNotification, t]
+  );
+
   return {
     files,
     selectedFiles,
@@ -510,6 +815,8 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     selectAllVisible,
     deselectAll,
     batchSetStatus,
-    batchDelete
+    batchDelete,
+    scanDelete401Status,
+    handleScanDelete401
   };
 }
