@@ -85,13 +85,43 @@
   color: var(--danger-color);
 }
 
-.scan401ErrorList {
+.scan401CodeSection {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: $spacing-xs;
 }
 
-.scan401ErrorItem {
+.scan401CodeToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-xs;
+}
+
+.scan401CodeList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scan401CodeItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.scan401CodeLabel {
+  min-width: 82px;
+  font-weight: 600;
+}
+
+.scan401CodeCount {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.scan401CodeSample {
+  flex: 1;
   font-size: 12px;
   color: inherit;
   white-space: nowrap;

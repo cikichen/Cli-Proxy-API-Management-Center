@@ -71,6 +71,7 @@ export function AuthFilesPage() {
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<AuthFileItem | null>(null);
   const [viewMode, setViewMode] = useState<'diagram' | 'list'>('list');
+  const [selectedProbeCodes, setSelectedProbeCodes] = useState<Set<string>>(new Set());
   const [batchActionBarVisible, setBatchActionBarVisible] = useState(false);
   const floatingBatchActionsRef = useRef<HTMLDivElement>(null);
   const batchActionAnimationRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
@@ -103,6 +104,8 @@ export function AuthFilesPage() {
     batchDelete,
     scanDelete401Status,
     handleScanDelete401,
+    handleSetStatusByProbeCodes,
+    handleDeleteByProbeCodes,
   } = useAuthFilesData({ refreshKeyStats });
 
   const statusBarCache = useAuthFilesStatusBarCache(files, usageDetails);
@@ -281,6 +284,8 @@ export function AuthFilesPage() {
     [pageItems]
   );
   const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);
+  const statusCodeGroups = scanDelete401Status.statusCodeGroups;
+  const selectedProbeCodeCount = selectedProbeCodes.size;
   const scanDelete401ProgressText = useMemo(() => {
     const status = scanDelete401Status;
     if (status.phase === 'idle') return '';
@@ -312,6 +317,55 @@ export function AuthFilesPage() {
   }, [scanDelete401Status, t]);
   const scanDelete401HasError =
     scanDelete401Status.errors > 0 || scanDelete401Status.deleteFailed > 0;
+
+  useEffect(() => {
+    setSelectedProbeCodes((prev) => {
+      const availableCodes = new Set(statusCodeGroups.map((group) => group.code));
+      if (availableCodes.size === 0) {
+        return prev.size === 0 ? prev : new Set<string>();
+      }
+
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((code) => {
+        if (availableCodes.has(code)) {
+          next.add(code);
+        } else {
+          changed = true;
+        }
+      });
+
+      if (next.size === 0 && scanDelete401Status.phase !== 'scanning' && availableCodes.has('401')) {
+        next.add('401');
+        changed = true;
+      }
+
+      if (!changed && next.size === prev.size) {
+        return prev;
+      }
+      return next;
+    });
+  }, [scanDelete401Status.phase, statusCodeGroups]);
+
+  const toggleProbeCode = useCallback((code: string) => {
+    setSelectedProbeCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) {
+        next.delete(code);
+      } else {
+        next.add(code);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllProbeCodes = useCallback(() => {
+    setSelectedProbeCodes(new Set(statusCodeGroups.map((group) => group.code)));
+  }, [statusCodeGroups]);
+
+  const clearProbeCodes = useCallback(() => {
+    setSelectedProbeCodes(new Set());
+  }, []);
 
   const showDetails = (file: AuthFileItem) => {
     setSelectedFile(file);
@@ -548,20 +602,80 @@ export function AuthFilesPage() {
         {scanDelete401Status.phase !== 'idle' && (
           <div className={scanDelete401HasError ? styles.scan401ErrorBox : styles.scan401InfoBox}>
             <div>{scanDelete401ProgressText}</div>
-            {scanDelete401Status.topErrors.length > 0 && (
-              <div className={styles.scan401ErrorList}>
-                {scanDelete401Status.topErrors.map((item) => (
-                  <div
-                    key={`${item.message}-${item.count}`}
-                    className={styles.scan401ErrorItem}
-                    title={item.message}
+            {statusCodeGroups.length > 0 && (
+              <div className={styles.scan401CodeSection}>
+                <div className={styles.scan401CodeToolbar}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={selectAllProbeCodes}
+                    disabled={scanDelete401Status.running || statusCodeGroups.length === 0}
                   >
-                    {t('auth_files.scan_401_error_item', {
-                      count: item.count,
-                      message: item.message,
-                    })}
-                  </div>
-                ))}
+                    {t('auth_files.scan_401_select_all_codes')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearProbeCodes}
+                    disabled={scanDelete401Status.running || selectedProbeCodeCount === 0}
+                  >
+                    {t('auth_files.scan_401_clear_codes')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => handleSetStatusByProbeCodes(Array.from(selectedProbeCodes), true)}
+                    disabled={
+                      disableControls || scanDelete401Status.running || selectedProbeCodeCount === 0
+                    }
+                  >
+                    {t('auth_files.scan_401_enable_selected_codes')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      handleSetStatusByProbeCodes(Array.from(selectedProbeCodes), false)
+                    }
+                    disabled={
+                      disableControls || scanDelete401Status.running || selectedProbeCodeCount === 0
+                    }
+                  >
+                    {t('auth_files.scan_401_disable_selected_codes')}
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => handleDeleteByProbeCodes(Array.from(selectedProbeCodes))}
+                    disabled={
+                      disableControls || scanDelete401Status.running || selectedProbeCodeCount === 0
+                    }
+                  >
+                    {t('auth_files.scan_401_delete_selected_codes')}
+                  </Button>
+                </div>
+                <div className={styles.scan401CodeList}>
+                  {statusCodeGroups.map((group) => (
+                    <label
+                      key={`${group.code}-${group.count}`}
+                      className={styles.scan401CodeItem}
+                      title={group.sampleMessage || group.label}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedProbeCodes.has(group.code)}
+                        onChange={() => toggleProbeCode(group.code)}
+                        disabled={scanDelete401Status.running}
+                      />
+                      <span className={styles.scan401CodeLabel}>{group.label}</span>
+                      <span className={styles.scan401CodeCount}>
+                        {t('auth_files.scan_401_code_count', { count: group.count })}
+                      </span>
+                      {group.sampleMessage && (
+                        <span className={styles.scan401CodeSample}>{group.sampleMessage}</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </div>
