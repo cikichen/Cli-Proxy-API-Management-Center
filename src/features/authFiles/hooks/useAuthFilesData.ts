@@ -14,6 +14,7 @@ import {
 } from '@/utils/quota';
 import { normalizeAuthIndex } from '@/utils/usage';
 import { getTypeLabel, isRuntimeOnlyAuthFile } from '@/features/authFiles/constants';
+import { readStoredScan401Concurrency } from '@/features/authFiles/extensions/scan401ConcurrencyConfig';
 
 type DeleteAllOptions = {
   filter: string;
@@ -83,8 +84,6 @@ export type UseAuthFilesDataOptions = {
   refreshKeyStats: () => Promise<void>;
 };
 
-const SCAN_401_CONCURRENCY = 8;
-const DELETE_401_CONCURRENCY = 8;
 const NO_STATUS_CODE = 'NO_STATUS';
 
 const EMPTY_SCAN_DELETE_401_STATUS: ScanDelete401Status = {
@@ -750,7 +749,8 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
             deleteFailed: 0
           }));
 
-          await runWithConcurrency(targetNames, DELETE_401_CONCURRENCY, async (name) => {
+          const { deleteConcurrency } = readStoredScan401Concurrency();
+          await runWithConcurrency(targetNames, deleteConcurrency, async (name) => {
             try {
               await authFilesApi.deleteFile(name);
               deletedCount += 1;
@@ -878,8 +878,9 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         let scanned = 0;
         let unauthorized = 0;
         let errors = 0;
+        const { scanConcurrency } = readStoredScan401Concurrency();
 
-        await runWithConcurrency(codexFiles, SCAN_401_CONCURRENCY, async (file) => {
+        await runWithConcurrency(codexFiles, scanConcurrency, async (file) => {
           let code: string | null = null;
           let sampleMessage = '';
 

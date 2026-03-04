@@ -1,7 +1,23 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import type { ScanDelete401Status } from '@/features/authFiles/hooks/useAuthFilesData';
+import {
+  DEFAULT_SCAN_401_DELETE_CONCURRENCY,
+  DEFAULT_SCAN_401_SCAN_CONCURRENCY,
+  MAX_SCAN_401_CONCURRENCY,
+  MIN_SCAN_401_CONCURRENCY,
+  normalizeScan401Concurrency,
+  readStoredScan401Concurrency,
+  writeStoredScan401Concurrency
+} from './scan401ConcurrencyConfig';
 import styles from './Scan401Panel.module.scss';
+
+const getInitialScanConcurrencyInput = (): string =>
+  String(readStoredScan401Concurrency().scanConcurrency);
+
+const getInitialDeleteConcurrencyInput = (): string =>
+  String(readStoredScan401Concurrency().deleteConcurrency);
 
 type Scan401PanelProps = {
   status: ScanDelete401Status;
@@ -24,6 +40,10 @@ type Scan401PanelProps = {
 
 export function Scan401Panel(props: Scan401PanelProps) {
   const { t } = useTranslation();
+  const [scanConcurrencyInput, setScanConcurrencyInput] = useState(getInitialScanConcurrencyInput);
+  const [deleteConcurrencyInput, setDeleteConcurrencyInput] = useState(
+    getInitialDeleteConcurrencyInput
+  );
   const {
     status,
     hasError,
@@ -43,7 +63,17 @@ export function Scan401Panel(props: Scan401PanelProps) {
     onDeleteByProbeCodes,
   } = props;
 
-  if (status.phase === 'idle') return null;
+  const commitScanConcurrency = (raw: string) => {
+    const normalized = normalizeScan401Concurrency(raw, DEFAULT_SCAN_401_SCAN_CONCURRENCY);
+    const next = writeStoredScan401Concurrency({ scanConcurrency: normalized });
+    setScanConcurrencyInput(String(next.scanConcurrency));
+  };
+
+  const commitDeleteConcurrency = (raw: string) => {
+    const normalized = normalizeScan401Concurrency(raw, DEFAULT_SCAN_401_DELETE_CONCURRENCY);
+    const next = writeStoredScan401Concurrency({ deleteConcurrency: normalized });
+    setDeleteConcurrencyInput(String(next.deleteConcurrency));
+  };
 
   const statusCodeGroups = status.statusCodeGroups;
   const listCountText = scan401ListFilterActive
@@ -59,20 +89,85 @@ export function Scan401Panel(props: Scan401PanelProps) {
 
   return (
     <div className={`${styles.panel} ${hasError ? styles.panelError : ''}`}>
-      <div className={styles.header}>
-        <p className={styles.progressText}>{progressText}</p>
-        {statusCodeGroups.length > 0 && (
-          <div className={styles.stats}>
-            <span className={styles.stat}>
-              {t('auth_files.scan_401_selected_codes_stat', {
-                count: selectedProbeCodeCount,
-                defaultValue: '已选 {{count}} 个错误码',
+      <div className={styles.configRow}>
+        <span className={styles.configTitle}>
+          {t('auth_files.scan_401_concurrency_title', {
+            defaultValue: '并发配置',
+          })}
+        </span>
+        <div className={styles.configFields}>
+          <label className={styles.configField}>
+            <span>
+              {t('auth_files.scan_401_scan_concurrency_label', {
+                defaultValue: '扫描并发',
               })}
             </span>
-            <span className={styles.stat}>{listCountText}</span>
-          </div>
-        )}
+            <input
+              className={styles.configInput}
+              type="number"
+              min={MIN_SCAN_401_CONCURRENCY}
+              max={MAX_SCAN_401_CONCURRENCY}
+              step={1}
+              value={scanConcurrencyInput}
+              disabled={status.running}
+              onChange={(event) => setScanConcurrencyInput(event.target.value)}
+              onBlur={(event) => commitScanConcurrency(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          </label>
+          <label className={styles.configField}>
+            <span>
+              {t('auth_files.scan_401_delete_concurrency_label', {
+                defaultValue: '删除并发',
+              })}
+            </span>
+            <input
+              className={styles.configInput}
+              type="number"
+              min={MIN_SCAN_401_CONCURRENCY}
+              max={MAX_SCAN_401_CONCURRENCY}
+              step={1}
+              value={deleteConcurrencyInput}
+              disabled={status.running}
+              onChange={(event) => setDeleteConcurrencyInput(event.target.value)}
+              onBlur={(event) => commitDeleteConcurrency(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          </label>
+        </div>
+        <span className={styles.configHint}>
+          {t('auth_files.scan_401_concurrency_hint', {
+            min: MIN_SCAN_401_CONCURRENCY,
+            max: MAX_SCAN_401_CONCURRENCY,
+            defaultValue: '范围 {{min}}-{{max}}，修改后自动保存',
+          })}
+        </span>
       </div>
+
+      {progressText && (
+        <div className={styles.header}>
+          <p className={styles.progressText}>{progressText}</p>
+          {statusCodeGroups.length > 0 && (
+            <div className={styles.stats}>
+              <span className={styles.stat}>
+                {t('auth_files.scan_401_selected_codes_stat', {
+                  count: selectedProbeCodeCount,
+                  defaultValue: '已选 {{count}} 个错误码',
+                })}
+              </span>
+              <span className={styles.stat}>{listCountText}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {statusCodeGroups.length > 0 && (
         <div className={styles.codeSection}>

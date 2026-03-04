@@ -14,6 +14,60 @@
   font-size: 13px;
 }
 
+.configRow {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  padding-bottom: $spacing-sm;
+  border-bottom: 1px dashed color-mix(in srgb, var(--border-color) 75%, transparent);
+}
+
+.configTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.configFields {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.configField {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.configInput {
+  width: 72px;
+  height: 30px;
+  border-radius: $radius-sm;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-primary) 90%, transparent);
+  color: var(--text-primary);
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+
+  &:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--primary-color) 70%, var(--border-color));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 16%, transparent);
+  }
+}
+
+.configHint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .panelError {
   border-color: var(--danger-color);
   background-color: rgba($error-color, 0.08);
@@ -158,6 +212,25 @@
 }
 
 @include mobile {
+  .configRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .configFields {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .configField {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .configInput {
+    width: 90px;
+  }
+
   .header {
     flex-direction: column;
   }
