@@ -74,6 +74,7 @@ export type UseAuthFilesDataResult = {
   batchDelete: (names: string[]) => void;
   scanDelete401Status: ScanDelete401Status;
   handleScanDelete401: (options: ScanDelete401Options) => void;
+  collectProbeCodeTargetNames: (codes: string[]) => string[];
   handleSetStatusByProbeCodes: (codes: string[], enabled: boolean) => void;
   handleDeleteByProbeCodes: (codes: string[]) => void;
 };
@@ -643,6 +644,14 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     [showConfirmation, showNotification, t]
   );
 
+  const collectProbeCodeTargetNames = useCallback((codes: string[]): string[] => {
+    const normalizedCodes = Array.from(
+      new Set(codes.map((code) => String(code || '').trim()).filter(Boolean))
+    );
+    if (normalizedCodes.length === 0) return [];
+    return collectNamesByCodes(scanFilesByCodeRef.current, normalizedCodes);
+  }, []);
+
   const resolveProbeCodeTargets = useCallback(
     (codes: string[]): ProbeCodeTargets | null => {
       const normalizedCodes = Array.from(
@@ -664,7 +673,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
 
       const selectedCodes = selectedGroups.map((group) => group.code);
       const selectedLabels = selectedGroups.map((group) => group.label).join(', ');
-      const targetNames = collectNamesByCodes(scanFilesByCodeRef.current, selectedCodes);
+      const targetNames = collectProbeCodeTargetNames(selectedCodes);
       if (targetNames.length === 0) {
         showNotification(t('auth_files.scan_401_no_code_targets'), 'info');
         return null;
@@ -672,7 +681,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
 
       return { targetNames, selectedLabels };
     },
-    [scanDelete401Status.statusCodeGroups, showNotification, t]
+    [collectProbeCodeTargetNames, scanDelete401Status.statusCodeGroups, showNotification, t]
   );
 
   const handleSetStatusByProbeCodes = useCallback(
@@ -1003,6 +1012,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     batchDelete,
     scanDelete401Status,
     handleScanDelete401,
+    collectProbeCodeTargetNames,
     handleSetStatusByProbeCodes,
     handleDeleteByProbeCodes
   };

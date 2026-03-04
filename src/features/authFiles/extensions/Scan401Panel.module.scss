@@ -1,0 +1,177 @@
+@use '@/styles/variables.scss' as *;
+@use '@/styles/mixins.scss' as *;
+
+.panel {
+  padding: $spacing-md;
+  margin-bottom: $spacing-md;
+  border-radius: $radius-md;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  font-size: 13px;
+}
+
+.panelError {
+  border-color: var(--danger-color);
+  background-color: rgba($error-color, 0.08);
+  color: var(--danger-color);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-sm;
+}
+
+.progressText {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: inherit;
+  flex: 1;
+}
+
+.stats {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  flex-wrap: wrap;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+}
+
+.codeSection {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding-top: $spacing-sm;
+  border-top: 1px dashed color-mix(in srgb, var(--border-color) 75%, transparent);
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.toolbarGroup {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: $spacing-xs;
+}
+
+.codeList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: $spacing-xs;
+}
+
+.codeItem {
+  display: flex;
+  align-items: flex-start;
+  gap: $spacing-sm;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: color-mix(in srgb, var(--bg-primary) 90%, transparent);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition:
+    border-color $transition-fast,
+    background-color $transition-fast,
+    box-shadow $transition-fast;
+
+  &:hover {
+    border-color: var(--border-hover);
+    background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+    box-shadow: $shadow-sm;
+  }
+
+  input {
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    accent-color: var(--primary-color);
+    flex-shrink: 0;
+  }
+}
+
+.codeItemSelected {
+  border-color: color-mix(in srgb, var(--primary-color) 68%, var(--border-color));
+  background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-primary));
+}
+
+.codeText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.codeMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: $spacing-xs;
+}
+
+.codeLabel {
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.codeCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-tertiary) 85%, transparent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.codeSample {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@include mobile {
+  .header {
+    flex-direction: column;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbarGroup {
+    width: 100%;
+  }
+
+  .codeList {
+    grid-template-columns: 1fr;
+  }
+}
