@@ -65,6 +65,40 @@
   margin-bottom: $spacing-md;
 }
 
+.scan401InfoBox {
+  padding: $spacing-sm $spacing-md;
+  margin-bottom: $spacing-md;
+  border-radius: $radius-md;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-xs;
+}
+
+.scan401ErrorBox {
+  @extend .scan401InfoBox;
+  border-color: var(--danger-color);
+  background-color: rgba($error-color, 0.08);
+  color: var(--danger-color);
+}
+
+.scan401ErrorList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scan401ErrorItem {
+  font-size: 12px;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 // 筛选区域
 .filterSection {
   display: flex;

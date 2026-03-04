@@ -104,6 +104,8 @@ export function AuthFilesPage() {
     deselectAll,
     batchSetStatus,
     batchDelete,
+    scanDelete401Status,
+    handleScanDelete401,
   } = useAuthFilesData({ refreshKeyStats });
 
   const statusBarCache = useAuthFilesStatusBarCache(files, usageDetails);
@@ -290,6 +292,37 @@ export function AuthFilesPage() {
     [pageItems]
   );
   const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);
+  const scanDelete401ProgressText = useMemo(() => {
+    const status = scanDelete401Status;
+    if (status.phase === 'idle') return '';
+    if (status.phase === 'scanning') {
+      return t('auth_files.scan_401_progress_scanning', {
+        scanned: status.scanned,
+        total: status.total,
+        unauthorized: status.unauthorized,
+        errors: status.errors,
+        skipped: status.skipped,
+      });
+    }
+    if (status.phase === 'deleting') {
+      return t('auth_files.scan_401_progress_deleting', {
+        deleted: status.deleted,
+        total: status.deletingTotal,
+        failed: status.deleteFailed,
+      });
+    }
+    return t('auth_files.scan_401_progress_done', {
+      scanned: status.scanned,
+      total: status.total,
+      unauthorized: status.unauthorized,
+      errors: status.errors,
+      skipped: status.skipped,
+      deleted: status.deleted,
+      deleteFailed: status.deleteFailed,
+    });
+  }, [scanDelete401Status, t]);
+  const scanDelete401HasError =
+    scanDelete401Status.errors > 0 || scanDelete401Status.deleteFailed > 0;
 
   const showDetails = (file: AuthFileItem) => {
     setSelectedFile(file);
@@ -513,6 +546,15 @@ export function AuthFilesPage() {
             >
               {deleteAllButtonLabel}
             </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handleScanDelete401({ filter })}
+              disabled={disableControls || loading || scanDelete401Status.running}
+              loading={scanDelete401Status.running}
+            >
+              {t('auth_files.scan_401_button')}
+            </Button>
             <input
               ref={fileInputRef}
               type="file"
@@ -525,6 +567,27 @@ export function AuthFilesPage() {
         }
       >
         {error && <div className={styles.errorBox}>{error}</div>}
+        {scanDelete401Status.phase !== 'idle' && (
+          <div className={scanDelete401HasError ? styles.scan401ErrorBox : styles.scan401InfoBox}>
+            <div>{scanDelete401ProgressText}</div>
+            {scanDelete401Status.topErrors.length > 0 && (
+              <div className={styles.scan401ErrorList}>
+                {scanDelete401Status.topErrors.map((item) => (
+                  <div
+                    key={`${item.message}-${item.count}`}
+                    className={styles.scan401ErrorItem}
+                    title={item.message}
+                  >
+                    {t('auth_files.scan_401_error_item', {
+                      count: item.count,
+                      message: item.message,
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className={styles.filterSection}>
           {renderFilterTags()}
