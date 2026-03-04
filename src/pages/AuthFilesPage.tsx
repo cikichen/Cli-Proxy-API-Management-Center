@@ -333,6 +333,34 @@ export function AuthFilesPage() {
     [pageItems]
   );
 
+  useEffect(() => {
+    if (scanDelete401Status.phase === 'idle') return;
+
+    if (scan401ListFilterActive) {
+      const nextSelectedSet = new Set(
+        listFiltered.filter((file) => !isRuntimeOnlyAuthFile(file)).map((file) => file.name)
+      );
+      const alreadySynced =
+        nextSelectedSet.size === selectedNames.length &&
+        selectedNames.every((name) => nextSelectedSet.has(name));
+      if (!alreadySynced) {
+        selectAllVisible(listFiltered);
+      }
+      return;
+    }
+
+    if (selectedNames.length > 0) {
+      deselectAll();
+    }
+  }, [
+    deselectAll,
+    listFiltered,
+    scan401ListFilterActive,
+    scanDelete401Status.phase,
+    selectAllVisible,
+    selectedNames
+  ]);
+
   const showDetails = (file: AuthFileItem) => {
     setSelectedFile(file);
     setDetailModalOpen(true);
