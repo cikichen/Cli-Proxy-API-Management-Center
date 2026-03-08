@@ -18,6 +18,7 @@ import { formatFileSize } from '@/utils/format';
 import {
   QUOTA_PROVIDER_TYPES,
   formatModified,
+  getAuthFileStatusMessage,
   getTypeColor,
   getTypeLabel,
   isRuntimeOnlyAuthFile,
@@ -91,6 +92,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const providerCardClass =
     quotaType === 'antigravity'
       ? styles.antigravityCard
+      : quotaType === 'claude'
+        ? styles.claudeCard
       : quotaType === 'codex'
         ? styles.codexCard
         : quotaType === 'gemini-cli'
@@ -103,7 +106,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const authIndexKey = normalizeAuthIndex(rawAuthIndex);
   const statusData =
     (authIndexKey && statusBarCache.get(authIndexKey)) || calculateStatusBarData([]);
-  const rawStatusMessage = String(file['status_message'] ?? file.statusMessage ?? '').trim();
+  const rawStatusMessage = getAuthFileStatusMessage(file);
   const hasStatusWarning =
     Boolean(rawStatusMessage) && !HEALTHY_STATUS_MESSAGES.has(rawStatusMessage.toLowerCase());
 

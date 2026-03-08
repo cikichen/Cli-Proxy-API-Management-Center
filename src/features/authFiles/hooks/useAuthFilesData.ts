@@ -10,15 +10,21 @@ import { downloadBlob } from '@/utils/download';
 import {
   CODEX_REQUEST_HEADERS,
   CODEX_USAGE_URL,
-  resolveCodexChatgptAccountId
+  resolveCodexChatgptAccountId,
 } from '@/utils/quota';
 import { normalizeAuthIndex } from '@/utils/usage';
-import { getTypeLabel, isRuntimeOnlyAuthFile } from '@/features/authFiles/constants';
+import {
+  getTypeLabel,
+  hasAuthFileStatusMessage,
+  isRuntimeOnlyAuthFile,
+} from '@/features/authFiles/constants';
 import { readStoredScan401Concurrency } from '@/features/authFiles/extensions/scan401ConcurrencyConfig';
 
 type DeleteAllOptions = {
   filter: string;
+  problemOnly: boolean;
   onResetFilterToAll: () => void;
+  onResetProblemOnly: () => void;
 };
 
 type ScanDelete401Options = {
@@ -98,11 +104,13 @@ const EMPTY_SCAN_DELETE_401_STATUS: ScanDelete401Status = {
   deletingTotal: 0,
   deleted: 0,
   deleteFailed: 0,
-  statusCodeGroups: []
+  statusCodeGroups: [],
 };
 
 const normalizeFileType = (file: AuthFileItem): string =>
-  String(file.type ?? file.provider ?? '').trim().toLowerCase();
+  String(file.type ?? file.provider ?? '')
+    .trim()
+    .toLowerCase();
 
 const trimErrorMessage = (message: string): string => {
   const normalized = message.replace(/\s+/g, ' ').trim();
@@ -128,7 +136,7 @@ const summarizeCodeGroups = (
       label: buildProbeCodeLabel(code, t),
       count: names.size,
       sampleMessage: sampleByCode.get(code) || '',
-      isHttpStatus: isHttpStatusCode(code)
+      isHttpStatus: isHttpStatusCode(code),
     }))
     .filter((group) => group.count > 0)
     .sort((a, b) => {
@@ -172,12 +180,17 @@ const collectNamesByCodes = (filesByCode: Map<string, Set<string>>, codes: strin
   codes.forEach((code) => {
     const set = filesByCode.get(code);
     if (!set) return;
-    set.forEach((name) => names.add(name));
+    set.forEach((name) => {
+      names.add(name);
+    });
   });
   return Array.from(names);
 };
 
-const removeNamesFromCodeMap = (filesByCode: Map<string, Set<string>>, deletedNames: Set<string>) => {
+const removeNamesFromCodeMap = (
+  filesByCode: Map<string, Set<string>>,
+  deletedNames: Set<string>
+) => {
   filesByCode.forEach((names, code) => {
     deletedNames.forEach((name) => {
       names.delete(name);
@@ -214,7 +227,6 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selectionCount = selectedFiles.size;
-
   const toggleSelect = useCallback((name: string) => {
     setSelectedFiles((prev) => {
       const next = new Set(prev);
@@ -370,7 +382,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
           } finally {
             setDeleting(null);
           }
-        }
+        },
       });
     },
     [showConfirmation, showNotification, t]
@@ -378,12 +390,17 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
 
   const handleDeleteAll = useCallback(
     (deleteAllOptions: DeleteAllOptions) => {
-      const { filter, onResetFilterToAll } = deleteAllOptions;
+      const { filter, problemOnly, onResetFilterToAll, onResetProblemOnly } = deleteAllOptions;
       const isFiltered = filter !== 'all';
+      const isProblemOnly = problemOnly === true;
       const typeLabel = isFiltered ? getTypeLabel(t, filter) : t('auth_files.filter_all');
-      const confirmMessage = isFiltered
-        ? t('auth_files.delete_filtered_confirm', { type: typeLabel })
-        : t('auth_files.delete_all_confirm');
+      const confirmMessage = isProblemOnly
+        ? isFiltered
+          ? t('auth_files.delete_problem_filtered_confirm', { type: typeLabel })
+          : t('auth_files.delete_problem_confirm')
+        : isFiltered
+          ? t('auth_files.delete_filtered_confirm', { type: typeLabel })
+          : t('auth_files.delete_all_confirm');
 
       showConfirmation({
         title: t('auth_files.delete_all_title', { defaultValue: 'Delete All Files' }),
@@ -393,18 +410,26 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         onConfirm: async () => {
           setDeletingAll(true);
           try {
-            if (!isFiltered) {
+            if (!isFiltered && !isProblemOnly) {
               await authFilesApi.deleteAll();
               showNotification(t('auth_files.delete_all_success'), 'success');
               setFiles((prev) => prev.filter((file) => isRuntimeOnlyAuthFile(file)));
               deselectAll();
             } else {
-              const filesToDelete = files.filter(
-                (f) => f.type === filter && !isRuntimeOnlyAuthFile(f)
-              );
+              const filesToDelete = files.filter((file) => {
+                if (isRuntimeOnlyAuthFile(file)) return false;
+                if (isFiltered && file.type !== filter) return false;
+                if (isProblemOnly && !hasAuthFileStatusMessage(file)) return false;
+                return true;
+              });
 
               if (filesToDelete.length === 0) {
-                showNotification(t('auth_files.delete_filtered_none', { type: typeLabel }), 'info');
+                const emptyMessage = isProblemOnly
+                  ? isFiltered
+                    ? t('auth_files.delete_problem_filtered_none', { type: typeLabel })
+                    : t('auth_files.delete_problem_none')
+                  : t('auth_files.delete_filtered_none', { type: typeLabel });
+                showNotification(emptyMessage, 'info');
                 setDeletingAll(false);
                 return;
               }
@@ -439,10 +464,31 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
                 return changed ? next : prev;
               });
 
-              if (failed === 0) {
+              if (failed === 0 && isProblemOnly) {
+                showNotification(
+                  isFiltered
+                    ? t('auth_files.delete_problem_filtered_success', {
+                        count: success,
+                        type: typeLabel,
+                      })
+                    : t('auth_files.delete_problem_success', { count: success }),
+                  'success'
+                );
+              } else if (failed === 0) {
                 showNotification(
                   t('auth_files.delete_filtered_success', { count: success, type: typeLabel }),
                   'success'
+                );
+              } else if (isProblemOnly) {
+                showNotification(
+                  isFiltered
+                    ? t('auth_files.delete_problem_filtered_partial', {
+                        success,
+                        failed,
+                        type: typeLabel,
+                      })
+                    : t('auth_files.delete_problem_partial', { success, failed }),
+                  'warning'
                 );
               } else {
                 showNotification(
@@ -450,7 +496,13 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
                   'warning'
                 );
               }
-              onResetFilterToAll();
+
+              if (isFiltered) {
+                onResetFilterToAll();
+              }
+              if (isProblemOnly) {
+                onResetProblemOnly();
+              }
             }
           } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : '';
@@ -458,7 +510,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
           } finally {
             setDeletingAll(false);
           }
-        }
+        },
       });
     },
     [deselectAll, files, showConfirmation, showNotification, t]
@@ -626,18 +678,21 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
           });
 
           if (failCount === 0) {
-            showNotification(`${t('auth_files.delete_all_success')} (${deleted.length})`, 'success');
+            showNotification(
+              `${t('auth_files.delete_all_success')} (${deleted.length})`,
+              'success'
+            );
           } else {
             showNotification(
               t('auth_files.delete_filtered_partial', {
                 success: deleted.length,
                 failed: failCount,
-                type: t('auth_files.filter_all')
+                type: t('auth_files.filter_all'),
               }),
               'warning'
             );
           }
-        }
+        },
       });
     },
     [showConfirmation, showNotification, t]
@@ -704,16 +759,23 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         title: t(titleKey),
         message: t(messageKey, {
           count: targetNames.length,
-          codes: selectedLabels
+          codes: selectedLabels,
         }),
         variant: enabled ? 'secondary' : 'danger',
         confirmText: t('common.confirm'),
         onConfirm: async () => {
           await batchSetStatus(targetNames, enabled);
-        }
+        },
       });
     },
-    [batchSetStatus, resolveProbeCodeTargets, scanDelete401Status.running, showConfirmation, showNotification, t]
+    [
+      batchSetStatus,
+      resolveProbeCodeTargets,
+      scanDelete401Status.running,
+      showConfirmation,
+      showNotification,
+      t,
+    ]
   );
 
   const handleDeleteByProbeCodes = useCallback(
@@ -731,7 +793,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         title: t('auth_files.scan_401_delete_title'),
         message: t('auth_files.scan_401_delete_codes_confirm', {
           count: targetNames.length,
-          codes: selectedLabels
+          codes: selectedLabels,
         }),
         variant: 'danger',
         confirmText: t('common.confirm'),
@@ -746,7 +808,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
             phase: 'deleting',
             deletingTotal: targetNames.length,
             deleted: 0,
-            deleteFailed: 0
+            deleteFailed: 0,
           }));
 
           const { deleteConcurrency } = readStoredScan401Concurrency();
@@ -761,7 +823,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
               setScanDelete401Status((prev) => ({
                 ...prev,
                 deleted: deletedCount,
-                deleteFailed: deleteFailedCount
+                deleteFailed: deleteFailedCount,
               }));
             }
           });
@@ -812,20 +874,27 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
             errors,
             deleted: deletedCount,
             deleteFailed: deleteFailedCount,
-            statusCodeGroups
+            statusCodeGroups,
           }));
 
           showNotification(
             t('auth_files.scan_401_delete_result', {
               success: deletedCount,
-              failed: deleteFailedCount
+              failed: deleteFailedCount,
             }),
             deleteFailedCount > 0 ? 'warning' : 'success'
           );
-        }
+        },
       });
     },
-    [refreshKeyStats, resolveProbeCodeTargets, scanDelete401Status.running, showConfirmation, showNotification, t]
+    [
+      refreshKeyStats,
+      resolveProbeCodeTargets,
+      scanDelete401Status.running,
+      showConfirmation,
+      showNotification,
+      t,
+    ]
   );
 
   const handleScanDelete401 = useCallback(
@@ -835,8 +904,11 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         return;
       }
 
-      const filter = String(optionsForScan.filter || 'all').trim().toLowerCase();
-      const scopeTypeLabel = filter === 'all' ? t('auth_files.filter_all') : getTypeLabel(t, filter);
+      const filter = String(optionsForScan.filter || 'all')
+        .trim()
+        .toLowerCase();
+      const scopeTypeLabel =
+        filter === 'all' ? t('auth_files.filter_all') : getTypeLabel(t, filter);
       const scopedFiles = files.filter((file) => {
         if (isRuntimeOnlyAuthFile(file)) return false;
         if (filter === 'all') return true;
@@ -852,11 +924,11 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
           ...EMPTY_SCAN_DELETE_401_STATUS,
           phase: 'done',
           filter,
-          skipped
+          skipped,
         });
         showNotification(
           t('auth_files.scan_401_no_target', {
-            scope: scopeTypeLabel
+            scope: scopeTypeLabel,
           }),
           'info'
         );
@@ -871,7 +943,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         phase: 'scanning',
         filter,
         total: codexFiles.length,
-        skipped
+        skipped,
       });
 
       void (async () => {
@@ -902,8 +974,8 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
               url: CODEX_USAGE_URL,
               header: {
                 ...CODEX_REQUEST_HEADERS,
-                'Chatgpt-Account-Id': chatgptAccountId
-              }
+                'Chatgpt-Account-Id': chatgptAccountId,
+              },
             });
 
             if (result.statusCode < 200 || result.statusCode >= 300) {
@@ -948,7 +1020,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
                 scanFilesByCodeRef.current,
                 scanSampleByCodeRef.current,
                 t
-              )
+              ),
             }));
           }
         });
@@ -964,14 +1036,14 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
             scanFilesByCodeRef.current,
             scanSampleByCodeRef.current,
             t
-          )
+          ),
         }));
 
         showNotification(
           t('auth_files.scan_401_scan_done', {
             total: codexFiles.length,
             unauthorized,
-            errors
+            errors,
           }),
           unauthorized > 0 || errors > 0 ? 'warning' : 'success'
         );
@@ -980,7 +1052,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         setScanDelete401Status((prev) => ({
           ...prev,
           running: false,
-          phase: 'done'
+          phase: 'done',
         }));
         showNotification(`${t('notification.operation_failed')}: ${message}`, 'error');
       });
@@ -1015,6 +1087,6 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     handleScanDelete401,
     collectProbeCodeTargetNames,
     handleSetStatusByProbeCodes,
-    handleDeleteByProbeCodes
+    handleDeleteByProbeCodes,
   };
 }
