@@ -1,0 +1,71 @@
+name: Custom Build and Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all-in-one HTML
+        run: npm run build
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: Prepare release assets
+        run: |
+          cd dist
+          mv index.html management.html
+          ls -lh management.html
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          current_ref="${GITHUB_REF_NAME}"
+          # 尝试获取最近的标签，如果是在分支上运行则显示最近的 commits
+          previous_tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1 || true)"
+          
+          : > release-notes.md
+          if [ -n "${previous_tag}" ] && [ "${current_ref}" != "${previous_tag}" ]; then
+            echo "Changes since ${previous_tag}:" >> release-notes.md
+            git log --pretty=format:"- %h %s" "${previous_tag}..HEAD" >> release-notes.md
+          else
+            echo "Build from ${current_ref}:" >> release-notes.md
+            git log -n 10 --pretty=format:"- %h %s" >> release-notes.md
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/management.html
+          body_path: release-notes.md
+          tag_name: "custom-build-${{ github.sha }}"
+          name: "Custom Build: ${{ github.ref_name }}"
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
